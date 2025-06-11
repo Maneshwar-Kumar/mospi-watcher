@@ -1,0 +1,2 @@
+# List of already processed MoSPI PDF URLs
+Create initial pdf_links.txt to track processed PDFs
