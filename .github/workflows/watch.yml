@@ -1,41 +1,36 @@
-name: MoSPI Watcher
+name: MoSPI PDF Watcher
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
-  workflow_dispatch:
+    - cron: '0 */6 * * *'  # every 6 hours
+  workflow_dispatch:  # allows manual triggering for testing
 
 jobs:
-  check-for-pdf:
+  run-watcher:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout repo
       uses: actions/checkout@v3
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: '3.x'
 
     - name: Install dependencies
-      run: pip install -r requirements.txt
+      run: pip install beautifulsoup4 requests
 
-    - name: Run watcher
-      run: python watcher.py
+    - name: Run watcher script
       env:
         EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
         EMAIL_TO: ${{ secrets.EMAIL_TO }}
-        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-        SMTP_PORT: ${{ secrets.SMTP_PORT }}
-        SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      run: python watcher.py
 
-    - name: Commit updated state
+    - name: Commit and push updates to pdf_links.txt
       run: |
-        git config --global user.name "github-actions"
-        git config --global user.email "github-actions@github.com"
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
         git add pdf_links.txt
-        git commit -m "Update PDF history [skip ci]" || echo "No changes to commit"
-        git push
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update tracked PDF links" && git push)
