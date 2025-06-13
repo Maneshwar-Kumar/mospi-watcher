@@ -1,0 +1,26 @@
+name: Fetch PDFs
+on:
+  repository_dispatch:
+    types: [fetch_pdfs]
+
+jobs:
+  fetch-pdfs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Fetch PDFs
+        run: |
+          echo '${{ toJson(github.event.client_payload.reports) }}' > reports.json
+          node fetch-pdfs.js
+          
+      - name: Upload PDFs
+        uses: actions/upload-artifact@v3
+        with:
+          name: fetched-pdfs
+          path: pdfs/
