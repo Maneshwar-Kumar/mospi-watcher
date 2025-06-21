@@ -1,118 +1,91 @@
-import os
 import requests
-from bs4 import BeautifulSoup
-import base64
-import json
+import os
+import re
 from urllib.parse import urljoin, urlparse
-import time
+from bs4 import BeautifulSoup
 
-def extract_pdfs_from_press_release(url):
-    """Extract PDF links from a press release page"""
+def extract_prid_and_download_pdf(url):
+    """Extract PRID from URL and download PDF directly"""
     try:
-        response = requests.get(url, timeout=30)
+        # Extract PRID from URL
+        prid_match = re.search(r'PRID=(\d+)', url)
+        if not prid_match:
+            print(f"Could not extract PRID from {url}")
+            return []
+        
+        prid = prid_match.group(1)
+        
+        # Direct PDF download URL pattern
+        pdf_url = f"https://pib.gov.in/Utilities/GeneratePdf.aspx?ID={prid}"
+        
+        print(f"Attempting to download PDF from: {pdf_url}")
+        
+        # Download PDF
+        response = requests.get(pdf_url, timeout=30)
         response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
         
-        pdf_links = []
-        # Find all links ending in .pdf
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if href.lower().endswith('.pdf'):
-                # Convert relative URLs to absolute
-                if href.startswith('http'):
-                    pdf_links.append(href)
-                else:
-                    pdf_links.append(urljoin(url, href))
+        # Check if response is actually a PDF
+        content_type = response.headers.get('content-type', '')
+        if 'pdf' not in content_type.lower():
+            print(f"Response is not a PDF for PRID {prid}")
+            return []
         
-        return pdf_links
+        # Save PDF
+        filename = f"pib_{prid}.pdf"
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+        
+        print(f"Downloaded: {filename} ({len(response.content)} bytes)")
+        return [pdf_url]
+        
     except Exception as e:
-        print(f"Error extracting PDFs from {url}: {e}")
+        print(f"Error downloading PDF for {url}: {e}")
         return []
 
-def download_pdf(url):
-    """Download PDF and return base64 encoded content"""
-    try:
-        response = requests.get(url, timeout=60)
-        response.raise_for_status()
-        
-        # Get filename from URL
-        filename = url.split('/')[-1]
-        if not filename.endswith('.pdf'):
-            filename += '.pdf'
-            
-        return {
-            'filename': filename,
-            'content': base64.b64encode(response.content).decode('utf-8'),
-            'url': url,
-            'size': len(response.content)
-        }
-    except Exception as e:
-        print(f"Error downloading PDF {url}: {e}")
-        return None
-
-def send_to_n8n(webhook_url, pdfs_data, press_release_urls):
-    """Send PDF data to N8N webhook"""
-    try:
-        payload = {
-            'pdfs': pdfs_data,
-            'source_urls': press_release_urls,
-            'timestamp': time.time()
-        }
-        
-        response = requests.post(webhook_url, json=payload, timeout=120)
-        response.raise_for_status()
-        print(f"Successfully sent {len(pdfs_data)} PDFs to N8N")
-        
-    except Exception as e:
-        print(f"Error sending to N8N: {e}")
-
-def main():
-    # Get environment variables
-    pdf_urls_str = os.environ.get('PDF_URLS', '')
-    n8n_webhook = os.environ.get('N8N_WEBHOOK', '')
+def process_urls(urls):
+    """Process multiple URLs and download PDFs"""
+    total_pdfs = 0
+    all_pdf_links = []
     
-    if not pdf_urls_str or not n8n_webhook:
-        print("Missing required environment variables")
-        return
-    
-    # Parse comma-separated URLs
-    press_release_urls = [url.strip() for url in pdf_urls_str.split(',') if url.strip()]
-    
-    print(f"Processing {len(press_release_urls)} press release URLs")
-    
-    all_pdfs_data = []
-    processed_urls = []
-    
-    for pr_url in press_release_urls:
-        print(f"Processing: {pr_url}")
-        
-        # Extract PDF links from press release page
-        pdf_links = extract_pdfs_from_press_release(pr_url)
+    for url in urls:
+        print(f"Processing: {url}")
+        pdf_links = extract_prid_and_download_pdf(url.strip())
+        all_pdf_links.extend(pdf_links)
+        total_pdfs += len(pdf_links)
         print(f"Found {len(pdf_links)} PDF links")
-        
-        # Download each PDF
-        for pdf_url in pdf_links:
-            print(f"Downloading: {pdf_url}")
-            pdf_data = download_pdf(pdf_url)
-            
-            if pdf_data:
-                pdf_data['source_url'] = pr_url
-                all_pdfs_data.append(pdf_data)
-                print(f"Downloaded: {pdf_data['filename']} ({pdf_data['size']} bytes)")
-            
-            # Add small delay to be respectful
-            time.sleep(1)
-        
-        processed_urls.append(pr_url)
-        time.sleep(2)  # Delay between press releases
     
-    print(f"Total PDFs downloaded: {len(all_pdfs_data)}")
-    
-    # Send to N8N if we have PDFs
-    if all_pdfs_data:
-        send_to_n8n(n8n_webhook, all_pdfs_data, processed_urls)
-    else:
-        print("No PDFs found to send")
+    print(f"Total PDFs downloaded: {total_pdfs}")
+    return all_pdf_links
 
-if __name__ == '__main__':
-    main()
+def send_to_n8n(webhook_url, pdf_links):
+    """Send results to N8N webhook"""
+    if webhook_url and webhook_url != "YOUR_N8N_WEBHOOK_URL":
+        try:
+            payload = {
+                "pdf_count": len(pdf_links),
+                "pdf_links": pdf_links,
+                "status": "completed"
+            }
+            response = requests.post(webhook_url, json=payload, timeout=10)
+            response.raise_for_status()
+            print("Successfully sent results to N8N")
+        except Exception as e:
+            print(f"Error sending to N8N: {e}")
+
+if __name__ == "__main__":
+    # Get URLs from environment variable
+    urls_str = os.environ.get('PDF_URLS', '')
+    webhook_url = os.environ.get('N8N_WEBHOOK', '')
+    
+    if not urls_str:
+        print("No URLs provided")
+        exit(1)
+    
+    urls = [url.strip() for url in urls_str.split(',') if url.strip()]
+    print(f"Processing {len(urls)} press release URLs")
+    
+    # Process URLs and download PDFs
+    pdf_links = process_urls(urls)
+    
+    # Send results to N8N
+    send_to_n8n(webhook_url, pdf_links)
