@@ -1,4 +1,5 @@
-name: Fetch PDFs
+name: Fetch PIB PDFs
+
 on:
   repository_dispatch:
     types: [fetch_pdfs]
@@ -6,6 +7,8 @@ on:
 jobs:
   fetch-pdfs:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
     steps:
       - uses: actions/checkout@v4
       
@@ -19,16 +22,33 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4
           
-      - name: Process PIB URLs and fetch PDFs
+      - name: Process PIB URLs
         env:
           PDF_URLS: ${{ join(github.event.client_payload.links, ',') }}
-          N8N_WEBHOOK: ${{ secrets.N8N_WEBHOOK }}  # Set this in repo secrets
+          N8N_WEBHOOK: ${{ secrets.N8N_WEBHOOK }}
         run: |
           python fetch_pdfs.py
           
-      - name: Upload PDFs as artifacts
+      - name: Upload PDF artifacts
         uses: actions/upload-artifact@v4
         with:
           name: pib-pdfs
-          path: "*.pdf"
-          if-no-files-found: error
+          path: |
+            pib_*.pdf
+          retention-days: 3
+          if-no-files-found: warn
+          
+      - name: Create summary report
+        if: always()
+        run: |
+          echo "PDF Processing Summary" > summary.md
+          echo "=====================" >> summary.md
+          echo "Run Date: $(date)" >> summary.md
+          echo "Processed URLs: ${{ github.event.client_payload.links.length }}" >> summary.md
+          echo "PDFs Downloaded: $(ls pib_*.pdf 2>/dev/null | wc -l)" >> summary.md
+          
+      - name: Upload summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: processing-summary
+          path: summary.md
