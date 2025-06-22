@@ -2,7 +2,7 @@ name: Fetch PIB PDFs
 
 on:
   repository_dispatch:
-    types: [fetch_pdfs]
+    types: [fetch-pdfs]  # Must match your event_type
 
 jobs:
   fetch-pdfs:
@@ -17,18 +17,26 @@ jobs:
         with:
           python-version: '3.10'
           
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 playwright pdfkit
-          sudo apt-get install -y wkhtmltopdf
+          pip install requests beautifulsoup4 pdfkit
+          
+      - name: Install Playwright
+        run: |
+          pip install playwright
           playwright install chromium
           playwright install-deps
           
+      - name: Install wkhtmltopdf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wkhtmltopdf
+          
       - name: Process PIB URLs
         env:
-          PDF_URLS: ${{ join(github.event.client_payload.links, ',') }}
-          N8N_WEBHOOK: 'https://n8n.maneshwar.com/webhook-test/receive-pdfs'
+          PDF_URLS: ${{ join(github.event.client_payload.pdf_urls, ',') }}
+          N8N_WEBHOOK: ${{ github.event.client_payload.n8n_webhook || 'https://n8n.maneshwar.com/webhook-test/receive-pdfs' }}
         run: |
           python fetch_pdfs.py
           
