@@ -6,6 +6,15 @@ from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import datetime
+import shutil
+
+# Check if running in GitHub Actions
+IS_GITHUB_ACTIONS = os.getenv('GITHUB_ACTIONS') == 'true'
+
+def log_message(message):
+    """Consistent logging format"""
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
 
 def is_valid_pdf_link(href):
     """Check if link is a relevant PDF"""
@@ -14,9 +23,8 @@ def is_valid_pdf_link(href):
     href = href.lower()
     if not href.endswith('.pdf'):
         return False
-    if href.startswith('javascript:'):
+    if href.startswith(('javascript:', 'mailto:')):
         return False
-    # Include specificdocs and other direct PDF links
     return ('specificdocs' in href or 
             'generatepdf.aspx' in href or
             '/pdf/' in href or
@@ -58,7 +66,7 @@ def find_pdf_links(url):
         
         return list(pdf_links)
     except Exception as e:
-        print(f"⚠️ PDF detection failed for {url}: {str(e)[:100]}...")
+        log_message(f"⚠️ PDF detection failed for {url}: {str(e)[:100]}...")
         return []
 
 async def convert_to_pdf(url, prid):
@@ -66,26 +74,28 @@ async def convert_to_pdf(url, prid):
     filename = f"pib_{prid}.pdf"
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch()
-            page = await browser.new_page()
+            # Launch browser with appropriate settings for GitHub Actions
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox'] if IS_GITHUB_ACTIONS else []
+            )
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
             
             await page.goto(url, timeout=60000, wait_until='networkidle')
             
             # Clean up page before PDF generation
             await page.evaluate('''() => {
                 // Remove unnecessary elements
-                const selectors = [
-                    'iframe', 'script', 'noscript',
-                    '.header', '.footer', 
-                    '.social-share', '.navigation'
-                ];
-                selectors.forEach(selector => {
-                    document.querySelectorAll(selector).forEach(el => el.remove());
-                });
+                const elements = document.querySelectorAll(
+                    'iframe, script, noscript, header, footer, nav, .social-share'
+                );
+                elements.forEach(el => el.remove());
                 
-                // Make content more PDF-friendly
+                // Improve PDF readability
                 document.body.style.padding = '20px';
                 document.body.style.fontSize = '12pt';
+                document.body.style.color = '#000000';
             }''')
             
             # Generate PDF with proper margins
@@ -98,7 +108,7 @@ async def convert_to_pdf(url, prid):
             await browser.close()
             
             file_size = os.path.getsize(filename)
-            print(f"✓ Generated PDF: {filename} ({file_size//1024} KB)")
+            log_message(f"✓ Generated PDF: {filename} ({file_size//1024} KB)")
             return {
                 "status": "success",
                 "filename": filename,
@@ -107,7 +117,7 @@ async def convert_to_pdf(url, prid):
                 "method": "browser_generated"
             }
     except Exception as e:
-        print(f"✗ Failed to convert {url}: {str(e)[:100]}...")
+        log_message(f"✗ Failed to convert {url}: {str(e)[:100]}...")
         return {
             "status": "failed",
             "error": str(e),
@@ -122,8 +132,7 @@ def download_pdf(pdf_url, filename):
         
         if 'pdf' in response.headers.get('content-type', '').lower():
             with open(filename, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+                shutil.copyfileobj(response.raw, f)
             file_size = os.path.getsize(filename)
             return {
                 "status": "success",
@@ -133,14 +142,14 @@ def download_pdf(pdf_url, filename):
                 "method": "direct_download"
             }
         else:
-            print(f"✗ Not a PDF: {pdf_url}")
+            log_message(f"✗ Not a PDF: {pdf_url}")
             return {
                 "status": "failed",
                 "error": "Not a PDF file",
                 "url": pdf_url
             }
     except Exception as e:
-        print(f"✗ Download failed {pdf_url}: {str(e)[:100]}...")
+        log_message(f"✗ Download failed {pdf_url}: {str(e)[:100]}...")
         return {
             "status": "failed",
             "error": str(e),
@@ -153,7 +162,7 @@ async def process_single_url(url):
     if not url:
         return None
         
-    print(f"\n🔍 Processing: {url}")
+    log_message(f"\n🔍 Processing: {url}")
     try:
         prid_match = re.search(r'PRID=(\d+)', url)
         prid = prid_match.group(1) if prid_match else "unknown"
@@ -169,7 +178,7 @@ async def process_single_url(url):
             }
         
         # If browser fails, try finding direct PDF links
-        print("⚠️ Falling back to PDF link detection")
+        log_message("⚠️ Falling back to PDF link detection")
         pdf_links = find_pdf_links(url)
         downloaded_files = []
         
@@ -195,7 +204,7 @@ async def process_single_url(url):
             "error": "No PDF generated or found"
         }
     except Exception as e:
-        print(f"⚠️ Error processing URL: {str(e)[:100]}...")
+        log_message(f"⚠️ Error processing URL: {str(e)[:100]}...")
         return {
             "url": url,
             "status": "error",
@@ -208,7 +217,7 @@ async def process_all_urls(urls):
     total = len(urls)
     
     for i, url in enumerate(urls, 1):
-        print(f"\n📄 Processing URL {i}/{total}")
+        log_message(f"\n📄 Processing URL {i}/{total}")
         result = await process_single_url(url)
         if result:
             results.append(result)
@@ -217,7 +226,8 @@ async def process_all_urls(urls):
 
 def send_to_n8n(webhook_url, results):
     """Send comprehensive results to n8n webhook"""
-    if not webhook_url or webhook_url == "YOUR_N8N_WEBHOOK_URL":
+    if not webhook_url:
+        log_message("⚠️ No webhook URL configured")
         return
         
     try:
@@ -227,6 +237,7 @@ def send_to_n8n(webhook_url, results):
         payload = {
             "metadata": {
                 "timestamp": datetime.datetime.now().isoformat(),
+                "environment": "github-actions" if IS_GITHUB_ACTIONS else "local",
                 "processed_urls": len(results),
                 "successful": successful,
                 "failed": len(results) - successful,
@@ -240,12 +251,15 @@ def send_to_n8n(webhook_url, results):
             webhook_url,
             json=payload,
             timeout=15,
-            headers={'Content-Type': 'application/json'}
+            headers={
+                'Content-Type': 'application/json',
+                'User-Agent': 'PIB-PDF-Fetcher/1.0'
+            }
         )
         response.raise_for_status()
-        print("✅ Results sent to n8n successfully")
+        log_message("✅ Results sent to n8n successfully")
     except Exception as e:
-        print(f"⚠️ Failed to send to n8n: {str(e)[:100]}...")
+        log_message(f"⚠️ Failed to send to n8n: {str(e)[:100]}...")
 
 def cleanup_pdfs():
     """Remove any PDF files from previous runs"""
@@ -253,9 +267,9 @@ def cleanup_pdfs():
         if f.startswith('pib_') and f.endswith('.pdf'):
             try:
                 os.remove(f)
-                print(f"♻️ Cleaned up: {f}")
+                log_message(f"♻️ Cleaned up: {f}")
             except Exception as e:
-                print(f"⚠️ Failed to clean up {f}: {str(e)[:100]}...")
+                log_message(f"⚠️ Failed to clean up {f}: {str(e)[:100]}...")
 
 if __name__ == "__main__":
     # Clean up previous runs
@@ -263,14 +277,14 @@ if __name__ == "__main__":
     
     # Get inputs from environment
     urls_str = os.environ.get('PDF_URLS', '')
-    webhook_url = os.environ.get('N8N_WEBHOOK', '')
+    webhook_url = os.environ.get('N8N_WEBHOOK', 'https://n8n.maneshwar.com/webhook-test/receive-pdfs')
     
     if not urls_str:
-        print("⛔ No URLs provided in PDF_URLS environment variable")
+        log_message("⛔ No URLs provided in PDF_URLS environment variable")
         exit(1)
     
     urls = [url.strip() for url in urls_str.split(',') if url.strip()]
-    print(f"📥 Starting processing for {len(urls)} URLs")
+    log_message(f"📥 Starting processing for {len(urls)} URLs")
     
     # Run async processing
     results = asyncio.run(process_all_urls(urls))
@@ -282,6 +296,6 @@ if __name__ == "__main__":
     # Determine exit code based on success rate
     success_count = sum(1 for r in valid_results if r.get('status') == 'success')
     success_rate = success_count / len(valid_results) if valid_results else 0
-    print(f"\n📊 Final results: {success_count} succeeded, {len(valid_results)-success_count} failed")
+    log_message(f"\n📊 Final results: {success_count} succeeded, {len(valid_results)-success_count} failed")
     
     exit(0 if success_rate >= 0.5 else 1)
