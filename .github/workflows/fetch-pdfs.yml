@@ -9,18 +9,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          node-version: '18'
+          python-version: '3.10'
           
-      - name: Fetch PDFs
+      - name: Install dependencies
         run: |
-          echo '${{ toJson(github.event.client_payload) }}' > reports.json
-          node fetch-pdfs.js
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
           
-      - name: Upload PDFs
+      - name: Process PIB URLs and fetch PDFs
+        env:
+          PDF_URLS: ${{ join(github.event.client_payload.links, ',') }}
+          N8N_WEBHOOK: ${{ secrets.N8N_WEBHOOK }}  # Set this in repo secrets
+        run: |
+          python fetch_pdfs.py
+          
+      - name: Upload PDFs as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: fetched-pdfs
-          path: pdfs/
+          name: pib-pdfs
+          path: "*.pdf"
+          if-no-files-found: error
