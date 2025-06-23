@@ -1,10 +1,61 @@
-- name: Install dependencies
-  run: |
-    python -m pip install --upgrade pip
-    pip install playwright beautifulsoup4
-    playwright install chromium
-    playwright install-deps
+name: Fetch PIB PDFs
 
-- name: Convert to PDF
-  run: |
-    python fetch_pdfs.py
+on:
+  repository_dispatch:
+    types: [fetch-pdfs]
+
+jobs:
+  fetch-pdfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright beautifulsoup4 requests
+          playwright install chromium
+          sudo apt-get install -y libgbm-dev
+          
+      - name: Convert to PDF
+        env:
+          PDF_URLS: ${{ join(github.event.client_payload.links, ' ') }}
+        run: |
+          python fetch_pdfs.py $PDF_URLS
+          
+      - name: Upload PDF artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pib-pdfs
+          path: pdfs/
+          if-no-files-found: warn
+          
+      - name: Send results to webhook
+        run: |
+          python3 -c "
+          import requests
+          import os
+          import json
+          
+          webhook_url = '${{ github.event.client_payload.n8n_webhook }}'
+          pdf_files = [f for f in os.listdir('pdfs') if f.endswith('.pdf')]
+          
+          payload = {
+              'metadata': {
+                  'run_id': '${{ github.run_id }}',
+                  'timestamp': '${{ github.event.client_payload.timestamp }}',
+                  'processed_urls': ${{ github.event.client_payload.count }},
+                  'successful_pdfs': len(pdf_files)
+              },
+              'details': [{'filename': f} for f in pdf_files]
+          }
+          
+          requests.post(webhook_url, json=payload)
+          "
