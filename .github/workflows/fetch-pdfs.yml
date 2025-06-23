@@ -1,39 +1,10 @@
-name: Fetch PIB PDFs
+- name: Install dependencies
+  run: |
+    python -m pip install --upgrade pip
+    pip install playwright beautifulsoup4
+    playwright install chromium
+    playwright install-deps
 
-on:
-  repository_dispatch:
-    types: [fetch-pdfs]
-
-jobs:
-  fetch-pdfs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
-          
-      - name: Process PIB URLs
-        env:
-          PDF_URLS: ${{ join(github.event.client_payload.pdf_urls, ',') }}
-          N8N_WEBHOOK: ${{ github.event.client_payload.n8n_webhook || 'https://n8n.maneshwar.com/webhook-test/receive-pdfs' }}
-        run: |
-          python fetch_pdfs.py
-          
-      - name: Upload PDF artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: pib-pdfs
-          path: |
-            pib_*.pdf
-          retention-days: 3
-          if-no-files-found: warn
+- name: Convert to PDF
+  run: |
+    python fetch_pdfs.py
