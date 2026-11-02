@@ -28,6 +28,7 @@ jobs:
         env:
           PDF_URLS: ${{ join(github.event.client_payload.links, ' ') }}
         run: |
+          # Word-splitting is intended: the links are space-separated PIB URLs
           python fetch_pdfs.py $PDF_URLS
           
       - name: Upload PDF artifacts
@@ -38,24 +39,25 @@ jobs:
           if-no-files-found: warn
           
       - name: Send results to webhook
+        env:
+          WEBHOOK_URL: ${{ github.event.client_payload.n8n_webhook }}
+          RUN_ID: ${{ github.run_id }}
+          TIMESTAMP: ${{ github.event.client_payload.timestamp }}
+          URL_COUNT: ${{ github.event.client_payload.count }}
         run: |
-          python3 -c "
-          import requests
+          python3 - <<'PY'
           import os
-          import json
-          
-          webhook_url = '${{ github.event.client_payload.n8n_webhook }}'
+          import requests
+
           pdf_files = [f for f in os.listdir('pdfs') if f.endswith('.pdf')]
-          
           payload = {
               'metadata': {
-                  'run_id': '${{ github.run_id }}',
-                  'timestamp': '${{ github.event.client_payload.timestamp }}',
-                  'processed_urls': ${{ github.event.client_payload.count }},
-                  'successful_pdfs': len(pdf_files)
+                  'run_id': os.environ['RUN_ID'],
+                  'timestamp': os.environ['TIMESTAMP'],
+                  'processed_urls': int(os.environ['URL_COUNT']),
+                  'successful_pdfs': len(pdf_files),
               },
-              'details': [{'filename': f} for f in pdf_files]
+              'details': [{'filename': f} for f in pdf_files],
           }
-          
-          requests.post(webhook_url, json=payload)
-          "
+          requests.post(os.environ['WEBHOOK_URL'], json=payload, timeout=30).raise_for_status()
+          PY

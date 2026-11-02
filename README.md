@@ -27,5 +27,5 @@ python fetch_pdfs.py "https://pib.gov.in/PressReleaseIframePage.aspx?PRID=213849
 ## Known limitations
 
 - De-duplication state is not implemented; the n8n side is assumed to do it.
-- The workflow interpolates `client_payload` values directly into shell and Python steps. Only a token with write access can dispatch, but values should be passed through `env:` before this is used beyond a personal project.
+- Dispatch payload values reach the job only through `env:` variables (no inline `${{ }}` in scripts), and the webhook post has a timeout and fails the job on an HTTP error. The workflow itself has not been run end to end since this change.
 - There are no tests.
